@@ -1,8 +1,11 @@
+import html
+import json
 import os
 import re
 import shutil
 import subprocess
 import threading
+import time
 import uuid
 
 import sublime
@@ -26,6 +29,32 @@ PROMPT_MARKER = "> "
 DIVIDER = "\n\n"
 
 IN_BUFFER_COMMANDS = {"<CONTINUE>", "<PLAN>", "<ACCEPT>", "<DEFAULT>"}
+
+INDICATOR_TICK_MS = 120
+INDICATOR_FRAMES = [
+    "[●○○○○]",
+    "[○●○○○]",
+    "[○○●○○]",
+    "[○○○●○]",
+    "[○○○○●]",
+    "[○○○●○]",
+    "[○○●○○]",
+    "[○●○○○]",
+]
+INDICATOR_HTML = (
+    "<body id=\"claude-proxy-indicator\">"
+    "<div style=\"padding: 2px 6px;"
+    " color: color(var(--foreground) alpha(0.7));\">"
+    "<div style=\"font-family: monospace;\">elapsed {elapsed}</div>"
+    "<div style=\"font-family: monospace; font-size: 0.9em;\">{spinner}</div>"
+    "{activity}"
+    "</div></body>"
+)
+ACTIVITY_LINE_HTML = (
+    "<div style=\"font-family: monospace; font-size: 0.85em;"
+    " opacity: 0.85; padding-top: 1px;\">{text}</div>"
+)
+ACTIVITY_MAX_LEN = 80
 
 UUID_RE = re.compile(
     r"\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b"
@@ -132,6 +161,10 @@ class ClaudeSession:
         self.is_first_turn = True
         self.current_process = None
         self.busy = False
+        self.start_time = None
+        self.phantom_set = None
+        self.spinner_frame = 0
+        self.current_activity = ""
 
     def send(self, prompt):
         if self.busy:
@@ -142,7 +175,15 @@ class ClaudeSession:
         if not prompt.strip():
             return
         self.busy = True
-        args = list(self.cmd) + ["--print"]
+        self.start_time = time.monotonic()
+        self.spinner_frame = 0
+        self.current_activity = ""
+        sublime.set_timeout(self._indicator_tick, 0)
+        args = list(self.cmd) + [
+            "--print",
+            "--output-format", "stream-json",
+            "--verbose",
+        ]
         pm = self.view.settings().get("claude_permission_mode")
         if pm:
             args += ["--permission-mode", pm]
@@ -169,7 +210,10 @@ class ClaudeSession:
                 stderr=subprocess.STDOUT,
                 cwd=self.cwd,
                 env=env,
-                bufsize=0,
+                text=True,
+                bufsize=1,
+                encoding="utf-8",
+                errors="replace",
             )
         except FileNotFoundError as e:
             sublime.set_timeout(
@@ -180,14 +224,20 @@ class ClaudeSession:
         print("[ClaudeProxy] launched pid={}".format(proc.pid))
         self.current_process = proc
         try:
-            while True:
-                chunk = proc.stdout.read(512)
-                if not chunk:
-                    break
-                text = chunk.decode("utf-8", errors="replace")
-                sublime.set_timeout(
-                    lambda t=text: append_to_view(self.view, t), 0
-                )
+            for line in proc.stdout:
+                stripped = line.rstrip("\r\n")
+                if not stripped:
+                    continue
+                event = None
+                if stripped.startswith("{"):
+                    try:
+                        event = json.loads(stripped)
+                    except ValueError:
+                        event = None
+                if event is None:
+                    self._emit_buffer_text(stripped + "\n")
+                    continue
+                self._handle_event(event)
             proc.wait()
             if proc.returncode != 0:
                 sublime.set_timeout(
@@ -201,11 +251,130 @@ class ClaudeSession:
             self.current_process = None
             sublime.set_timeout(self._finalize_turn, 0)
 
+    def _emit_buffer_text(self, text):
+        sublime.set_timeout(
+            lambda t=text: append_to_view(self.view, t), 0
+        )
+
+    def _handle_event(self, event):
+        etype = event.get("type")
+        if etype == "assistant":
+            message = event.get("message") or {}
+            content = message.get("content") or []
+            parent = event.get("parent_tool_use_id")
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                btype = block.get("type")
+                if btype == "text":
+                    text = block.get("text") or ""
+                    if text:
+                        self._emit_buffer_text(text)
+                elif btype == "tool_use":
+                    name = block.get("name") or ""
+                    tool_input = block.get("input") or {}
+                    self.current_activity = self._describe_tool_use(
+                        name, tool_input, parent
+                    )
+            return
+        if etype == "user":
+            return
+        if etype == "result":
+            return
+        return
+
+    def _describe_tool_use(self, name, tool_input, parent_tool_use_id):
+        if not isinstance(tool_input, dict):
+            tool_input = {}
+        prefix = "↳ " if parent_tool_use_id else ""
+        if name == "Task":
+            subagent = tool_input.get("subagent_type") or "agent"
+            desc = tool_input.get("description") or ""
+            body = "→ {} subagent: {}".format(subagent, desc)
+        elif name == "Bash":
+            cmd = tool_input.get("command") or ""
+            body = "Bash: {}".format(cmd)
+        elif name in ("Read", "Edit", "Write", "NotebookEdit"):
+            path = tool_input.get("file_path") or ""
+            body = "{}: {}".format(name, os.path.basename(path) or path)
+        elif name in ("Glob", "Grep"):
+            pat = tool_input.get("pattern") or ""
+            body = "{}: {}".format(name, pat)
+        elif name == "WebFetch":
+            url = tool_input.get("url") or ""
+            body = "WebFetch: {}".format(url)
+        elif name == "WebSearch":
+            q = tool_input.get("query") or ""
+            body = "WebSearch: {}".format(q)
+        else:
+            body = name or "tool"
+        full = prefix + body
+        full = full.replace("\n", " ")
+        if len(full) > ACTIVITY_MAX_LEN:
+            full = full[: ACTIVITY_MAX_LEN - 1] + "…"
+        return full
+
     def _finalize_turn(self, extra=""):
+        elapsed_label = self._format_elapsed()
+        self._clear_indicator()
         if extra:
             append_to_view(self.view, extra)
+        append_to_view(
+            self.view, "\n\n[took {}]".format(elapsed_label)
+        )
         append_to_view(self.view, DIVIDER + PROMPT_MARKER)
         self.busy = False
+
+    def _format_elapsed(self):
+        if self.start_time is None:
+            return "00:00"
+        elapsed = int(time.monotonic() - self.start_time)
+        mm = elapsed // 60
+        ss = elapsed % 60
+        return "{:02d}:{:02d}".format(mm, ss)
+
+    def _indicator_tick(self):
+        if not self.busy or not self.view.is_valid():
+            self._clear_indicator()
+            return
+        if SESSIONS.get(self.view.id()) is not self:
+            self._clear_indicator()
+            return
+        if self.phantom_set is None:
+            self.phantom_set = sublime.PhantomSet(
+                self.view, "claude_proxy_indicator"
+            )
+        elapsed = int(time.monotonic() - (self.start_time or time.monotonic()))
+        mm = elapsed // 60
+        ss = elapsed % 60
+        elapsed_text = "{:02d}:{:02d}".format(mm, ss)
+        spinner = INDICATOR_FRAMES[self.spinner_frame % len(INDICATOR_FRAMES)]
+        self.spinner_frame += 1
+        if self.current_activity:
+            activity_html = ACTIVITY_LINE_HTML.format(
+                text=html.escape(self.current_activity)
+            )
+        else:
+            activity_html = ""
+        body = INDICATOR_HTML.format(
+            elapsed=elapsed_text,
+            spinner=spinner,
+            activity=activity_html,
+        )
+        region = sublime.Region(self.view.size(), self.view.size())
+        phantom = sublime.Phantom(region, body, sublime.LAYOUT_BLOCK)
+        self.phantom_set.update([phantom])
+        sublime.set_timeout(self._indicator_tick, INDICATOR_TICK_MS)
+
+    def _clear_indicator(self):
+        if self.phantom_set is not None and self.view.is_valid():
+            try:
+                self.phantom_set.update([])
+            except Exception as e:
+                print("[ClaudeProxy] indicator clear failed: {}".format(e))
+        self.phantom_set = None
+        self.start_time = None
+        self.current_activity = ""
 
     def cancel(self):
         if self.current_process and self.current_process.poll() is None:
