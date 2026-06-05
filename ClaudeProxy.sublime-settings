@@ -1,0 +1,5 @@
+{
+    // Command (and args) used to launch Claude. Override if `claude` isn't on PATH
+    // or you want to pass flags, e.g. ["claude", "--model", "claude-opus-4-7"].
+    "claude_command": ["claude"]
+}
