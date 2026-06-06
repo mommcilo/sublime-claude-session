@@ -1,9 +1,9 @@
 [
     {
         "keys": ["ctrl+enter"],
-        "command": "claude_proxy_send",
+        "command": "claude_session_send",
         "context": [
-            { "key": "setting.claude_proxy_active", "operator": "equal", "operand": true }
+            { "key": "setting.claude_session_active", "operator": "equal", "operand": true }
         ]
     }
 ]

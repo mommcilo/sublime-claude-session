@@ -1,6 +1,6 @@
 [
-    { "caption": "ClaudeProxy: Start Session",  "command": "claude_proxy_start" },
-    { "caption": "ClaudeProxy: Send Prompt",    "command": "claude_proxy_send" },
-    { "caption": "ClaudeProxy: Cancel Request", "command": "claude_proxy_cancel" },
-    { "caption": "ClaudeProxy: Stop Session",   "command": "claude_proxy_stop" }
+    { "caption": "ClaudeSession: Start Session",  "command": "claude_session_start" },
+    { "caption": "ClaudeSession: Send Prompt",    "command": "claude_session_send" },
+    { "caption": "ClaudeSession: Cancel Request", "command": "claude_session_cancel" },
+    { "caption": "ClaudeSession: Stop Session",   "command": "claude_session_stop" }
 ]

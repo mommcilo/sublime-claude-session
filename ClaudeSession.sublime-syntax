@@ -1,0 +1,40 @@
+%YAML 1.2
+---
+name: Claude Session
+scope: text.claude-session
+hidden: true
+first_line_match: '^Claude session [0-9a-f-]{36}$'
+
+contexts:
+  main:
+    # Banner block (top of file, before first turn)
+    - match: '^Claude session [0-9a-f-]{36}$'
+      scope: comment.block.banner.claude-session
+    - match: '^cwd: .*$'
+      scope: comment.block.banner.claude-session
+    - match: '^Commands \(.*\)$'
+      scope: comment.block.banner.claude-session
+    - match: '^Type your prompt.*$'
+      scope: comment.block.banner.claude-session
+
+    # In-buffer commands (typed inside a prompt)
+    - match: '<(CONTINUE|PLAN|ACCEPT|DEFAULT)>'
+      scope: keyword.other.proxy-command.claude-session
+
+    # Timestamp line
+    - match: '^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]$'
+      scope: comment.line.timestamp.claude-session
+
+    # Error markers
+    - match: '^\[(launch failed|claude exited with code).*\]$'
+      scope: invalid.illegal.error.claude-session
+
+    # Prompt line: marker + text
+    - match: '^> '
+      scope: punctuation.section.prompt.claude-session
+      push: prompt_line
+
+  prompt_line:
+    - meta_scope: string.unquoted.prompt.claude-session
+    - match: '$'
+      pop: true

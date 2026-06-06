@@ -13,7 +13,7 @@ import sublime_plugin
 
 
 # In-memory cache only. Authoritative state lives on view.settings() so it
-# survives plugin reloads (saving claude_proxy.py wipes module-level globals).
+# survives plugin reloads (saving claude_session.py wipes module-level globals).
 SESSIONS = {}
 
 CLAUDE_FALLBACK_PATHS = [
@@ -42,7 +42,7 @@ INDICATOR_FRAMES = [
     "[○●○○○]",
 ]
 INDICATOR_HTML = (
-    "<body id=\"claude-proxy-indicator\">"
+    "<body id=\"claude-session-indicator\">"
     "<div style=\"padding: 2px 6px;"
     " color: color(var(--foreground) alpha(0.7));\">"
     "<div style=\"font-family: monospace;\">elapsed {elapsed}</div>"
@@ -95,7 +95,7 @@ def resolve_claude_executable(name):
 
 
 def resolve_claude_cmd():
-    settings = sublime.load_settings("ClaudeProxy.sublime-settings")
+    settings = sublime.load_settings("ClaudeSession.sublime-settings")
     cmd = settings.get("claude_command", ["claude"])
     if isinstance(cmd, str):
         cmd = [cmd]
@@ -140,12 +140,12 @@ def find_session_id_in_view(view):
 def append_to_view(view, text):
     if not view.is_valid():
         return
-    view.run_command("claude_proxy_append", {"text": text})
+    view.run_command("claude_session_append", {"text": text})
 
 
 def store_session_state(view, session_id, cmd, cwd, first_turn):
     s = view.settings()
-    s.set("claude_proxy_active", True)
+    s.set("claude_session_active", True)
     s.set("claude_session_id", session_id)
     s.set("claude_session_cmd", cmd)
     s.set("claude_session_cwd", cwd)
@@ -170,13 +170,13 @@ class ClaudeSession:
     def send(self, prompt):
         if self.busy:
             sublime.status_message(
-                "ClaudeProxy: still waiting for previous response"
+                "ClaudeSession: still waiting for previous response"
             )
             return
         if not prompt.strip():
             return
         self.view.run_command(
-            "claude_proxy_insert_above_last_prompt",
+            "claude_session_insert_above_last_prompt",
             {"text": "[" + self._timestamp() + "]\n"},
         )
         self.busy = True
@@ -207,7 +207,7 @@ class ClaudeSession:
         env = os.environ.copy()
         env.setdefault("TERM", "dumb")
         env.setdefault("NO_COLOR", "1")
-        print("[ClaudeProxy] cwd={} args={}".format(self.cwd, args))
+        print("[ClaudeSession] cwd={} args={}".format(self.cwd, args))
         try:
             proc = subprocess.Popen(
                 args,
@@ -227,7 +227,7 @@ class ClaudeSession:
                 0,
             )
             return
-        print("[ClaudeProxy] launched pid={}".format(proc.pid))
+        print("[ClaudeSession] launched pid={}".format(proc.pid))
         self.current_process = proc
         try:
             for line in proc.stdout:
@@ -354,7 +354,7 @@ class ClaudeSession:
             return
         if self.phantom_set is None:
             self.phantom_set = sublime.PhantomSet(
-                self.view, "claude_proxy_indicator"
+                self.view, "claude_session_indicator"
             )
         elapsed = int(time.monotonic() - (self.start_time or time.monotonic()))
         mm = elapsed // 60
@@ -383,7 +383,7 @@ class ClaudeSession:
             try:
                 self.phantom_set.update([])
             except Exception as e:
-                print("[ClaudeProxy] indicator clear failed: {}".format(e))
+                print("[ClaudeSession] indicator clear failed: {}".format(e))
         self.phantom_set = None
         self.start_time = None
         self.current_activity = ""
@@ -475,13 +475,13 @@ def handle_in_buffer_command(view, token):
         return
 
 
-class ClaudeProxyAppendCommand(sublime_plugin.TextCommand):
+class ClaudeSessionAppendCommand(sublime_plugin.TextCommand):
     def run(self, edit, text):
         self.view.insert(edit, self.view.size(), text)
         self.view.show(self.view.size())
 
 
-class ClaudeProxyInsertAboveLastPromptCommand(sublime_plugin.TextCommand):
+class ClaudeSessionInsertAboveLastPromptCommand(sublime_plugin.TextCommand):
     def run(self, edit, text):
         view = self.view
         if not view.is_valid():
@@ -496,14 +496,14 @@ class ClaudeProxyInsertAboveLastPromptCommand(sublime_plugin.TextCommand):
         view.insert(edit, idx + 1, text)
 
 
-class ClaudeProxyStartCommand(sublime_plugin.WindowCommand):
+class ClaudeSessionStartCommand(sublime_plugin.WindowCommand):
     def run(self):
         cmd = resolve_claude_cmd()
         if not (os.path.isabs(cmd[0]) and os.path.isfile(cmd[0])):
             sublime.error_message(
-                "ClaudeProxy: could not find `{}`.\n"
+                "ClaudeSession: could not find `{}`.\n"
                 "Install the Claude Code CLI or set `claude_command` in\n"
-                "Preferences > Package Settings > ClaudeProxy.".format(cmd[0])
+                "Preferences > Package Settings > ClaudeSession.".format(cmd[0])
             )
             return
 
@@ -517,17 +517,20 @@ class ClaudeProxyStartCommand(sublime_plugin.WindowCommand):
                 f.write(format_banner(session_id, cwd))
         except OSError as e:
             sublime.error_message(
-                "ClaudeProxy: could not create {}:\n{}".format(file_path, e)
+                "ClaudeSession: could not create {}:\n{}".format(file_path, e)
             )
             return
 
         view = self.window.open_file(file_path)
         view.settings().set("word_wrap", True)
+        view.assign_syntax(
+            "Packages/ClaudeSession/ClaudeSession.sublime-syntax"
+        )
         store_session_state(view, session_id, cmd, cwd, first_turn=True)
         SESSIONS[view.id()] = ClaudeSession(view, cmd, cwd, session_id)
 
 
-class ClaudeProxySendCommand(sublime_plugin.TextCommand):
+class ClaudeSessionSendCommand(sublime_plugin.TextCommand):
     def run(self, edit):
         view = self.view
         raw = extract_pending_prompt(view)
@@ -541,14 +544,14 @@ class ClaudeProxySendCommand(sublime_plugin.TextCommand):
         session = get_or_restore_session(view)
         if not session:
             sublime.status_message(
-                "ClaudeProxy: no active session. Type <CONTINUE> to resume "
-                "from this file, or run 'ClaudeProxy: Start Session'."
+                "ClaudeSession: no active session. Type <CONTINUE> to resume "
+                "from this file, or run 'ClaudeSession: Start Session'."
             )
             return
         session.send(prompt)
 
 
-class ClaudeProxyCancelCommand(sublime_plugin.WindowCommand):
+class ClaudeSessionCancelCommand(sublime_plugin.WindowCommand):
     def run(self):
         view = self.window.active_view()
         if not view:
@@ -558,7 +561,7 @@ class ClaudeProxyCancelCommand(sublime_plugin.WindowCommand):
             session.cancel()
 
 
-class ClaudeProxyStopCommand(sublime_plugin.WindowCommand):
+class ClaudeSessionStopCommand(sublime_plugin.WindowCommand):
     def run(self):
         view = self.window.active_view()
         if not view:
@@ -568,7 +571,7 @@ class ClaudeProxyStopCommand(sublime_plugin.WindowCommand):
             session.stop()
 
 
-class ClaudeProxyListener(sublime_plugin.EventListener):
+class ClaudeSessionListener(sublime_plugin.EventListener):
     def on_load(self, view):
         self._maybe_activate(view)
 
@@ -577,11 +580,14 @@ class ClaudeProxyListener(sublime_plugin.EventListener):
 
     def _maybe_activate(self, view):
         s = view.settings()
-        if s.get("claude_proxy_active"):
+        if s.get("claude_session_active"):
             return
         fname = view.file_name() or ""
         if SESSION_FILENAME_RE.search(fname):
-            s.set("claude_proxy_active", True)
+            s.set("claude_session_active", True)
+            view.assign_syntax(
+                "Packages/ClaudeSession/ClaudeSession.sublime-syntax"
+            )
 
     def on_close(self, view):
         session = SESSIONS.pop(view.id(), None)
