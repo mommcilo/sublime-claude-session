@@ -19,9 +19,9 @@ A Sublime Text plugin that runs an interactive [Claude Code](https://docs.claude
 
 ## Usage
 
-1. Open the Command Palette (`Ctrl/Cmd+Shift+P`) and run **ClaudeSession: Start Session**. The plugin creates `ClaudeSession-<uuid>.txt` in the session's working directory and opens it as a regular text file with a banner and a `> ` prompt marker.
-2. Type your prompt below the marker.
-3. Press `Ctrl+Enter` to send. Claude's response streams in below your prompt; when it finishes, a new `> ` marker appears for the next turn.
+1. Open the Command Palette (`Ctrl/Cmd+Shift+P`) and run **ClaudeSession: Start Session**. The plugin creates `ClaudeSession-<uuid>.txt` in the session's working directory and opens it as a regular text file with a banner.
+2. The first interactive line is a pre-filled directory prompt: `-> Enter working directory(current - if you want to work from here just hit CTRL + ENTER): <cwd>`. Edit the path to point Claude at a different folder, or press `Ctrl+Enter` to accept the current one. The plugin sends Claude a short check-and-cd instruction; Claude either confirms the folder exists and switches into it, or tells you it doesn't and does nothing.
+3. From the second turn onward, prompts use a `> ` marker. Type below it, press `Ctrl+Enter` to send. Claude's response streams in below your prompt; when it finishes, a new `> ` marker appears for the next turn.
 4. The buffer is a normal file — `Ctrl/Cmd+S` saves the transcript at any time, and closing a dirty view prompts to save. Closing the view also ends the session and terminates any in-flight `claude` process; the `.txt` file stays on disk.
 
 The session's working directory is picked, in order, from: the first open folder in the window, the directory of the active file, or `$HOME`. That's also where `ClaudeSession-<uuid>.txt` is written.

@@ -28,6 +28,15 @@ CLAUDE_FALLBACK_PATHS = [
 PROMPT_MARKER = "> "
 DIVIDER = "\n\n"
 
+DIR_PROMPT_LABEL = (
+    "-> Enter working directory(current - if you want to work from here "
+    "just hit CTRL + ENTER): "
+)
+DIR_CHECK_PROMPT = (
+    "Check if folder {path} exists. If not don't do anything just inform "
+    "user. If it exist move yourself to that folder we will work from there."
+)
+
 IN_BUFFER_COMMANDS = {"<CONTINUE>", "<PLAN>", "<ACCEPT>", "<DEFAULT>"}
 
 INDICATOR_TICK_MS = 120
@@ -63,7 +72,7 @@ SESSION_FILENAME_RE = re.compile(r"ClaudeSession-[0-9a-f-]{36}\.txt$")
 
 BANNER_TEMPLATE = (
     "Claude session {sid}\n"
-    "cwd: {cwd}\n"
+    "-> cwd: {cwd}\n"
     "\n"
     "Commands (type one alone after >, then Ctrl+Enter):\n"
     "  <CONTINUE>  Re-attach to this session after reopening the file.\n"
@@ -71,14 +80,22 @@ BANNER_TEMPLATE = (
     "  <ACCEPT>    Switch to accept-edits mode: auto-approve file edits.\n"
     "  <DEFAULT>   Restore the default permission prompts.\n"
     "\n"
-    "Type your prompt after the > below and press Ctrl+Enter.\n"
-    "\n"
-    "> "
+    "{dir_prompt_label}{cwd}"
 )
 
 
 def format_banner(session_id, cwd):
-    return BANNER_TEMPLATE.format(sid=session_id, cwd=cwd)
+    return BANNER_TEMPLATE.format(
+        sid=session_id, cwd=cwd, dir_prompt_label=DIR_PROMPT_LABEL
+    )
+
+
+def extract_directory_prompt(view):
+    text = view.substr(sublime.Region(0, view.size()))
+    idx = text.rfind(DIR_PROMPT_LABEL)
+    if idx < 0:
+        return None
+    return text[idx + len(DIR_PROMPT_LABEL):]
 
 
 def resolve_claude_executable(name):
@@ -527,12 +544,30 @@ class ClaudeSessionStartCommand(sublime_plugin.WindowCommand):
             "Packages/ClaudeSession/ClaudeSession.sublime-syntax"
         )
         store_session_state(view, session_id, cmd, cwd, first_turn=True)
+        view.settings().set("claude_session_needs_directory", True)
         SESSIONS[view.id()] = ClaudeSession(view, cmd, cwd, session_id)
 
 
 class ClaudeSessionSendCommand(sublime_plugin.TextCommand):
     def run(self, edit):
         view = self.view
+        if view.settings().get("claude_session_needs_directory", False):
+            raw = extract_directory_prompt(view)
+            if raw is None:
+                return
+            path = raw.strip()
+            if not path:
+                return
+            session = get_or_restore_session(view)
+            if not session:
+                sublime.status_message(
+                    "ClaudeSession: no active session. Run 'ClaudeSession: "
+                    "Start Session'."
+                )
+                return
+            view.settings().set("claude_session_needs_directory", False)
+            session.send(DIR_CHECK_PROMPT.format(path=path))
+            return
         raw = extract_pending_prompt(view)
         prompt = raw.strip()
         if not prompt:
