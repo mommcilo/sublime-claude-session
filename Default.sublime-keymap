@@ -5,5 +5,12 @@
         "context": [
             { "key": "setting.claude_session_active", "operator": "equal", "operand": true }
         ]
+    },
+    {
+        "keys": ["ctrl+."],
+        "command": "claude_session_cancel",
+        "context": [
+            { "key": "setting.claude_session_active", "operator": "equal", "operand": true }
+        ]
     }
 ]

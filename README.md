@@ -32,12 +32,12 @@ The session's working directory is picked, in order, from: the first open folder
 |---|---|---|
 | ClaudeSession: Start Session | `claude_session_start` | Opens a new session view. |
 | ClaudeSession: Send Prompt | `claude_session_send` | Sends text after the current prompt marker. Bound to `Ctrl+Enter` in session views. |
-| ClaudeSession: Cancel Request | `claude_session_cancel` | Terminates the in-flight `claude` process; keeps the session. |
+| ClaudeSession: Cancel Request | `claude_session_cancel` | Terminates the in-flight `claude` process; keeps the session. Bound to `Ctrl+.` in session views. |
 | ClaudeSession: Stop Session | `claude_session_stop` | Ends the session and discards state. |
 
 ## Key bindings
 
-`Ctrl+Enter` is bound to send only inside a ClaudeSession session view (gated by the `claude_session_active` view setting), so it won't shadow your global binding elsewhere.
+`Ctrl+Enter` (send) and `Ctrl+.` (interrupt the running turn — same effect as `Ctrl+C` in the CLI) are bound only inside a ClaudeSession session view (gated by the `claude_session_active` view setting), so they won't shadow your global bindings elsewhere.
 
 ## Settings
 
